@@ -60,6 +60,24 @@ def test_basic_search_returns_results(
     assert matches[0]["source_type"]
 
 
+def test_retrieval_only_search_does_not_require_llm(
+    admin_user: DATestUser,
+    api_key: DATestAPIKey,
+) -> None:
+    cc_pair = CCPairManager.create_from_scratch(user_performing_action=admin_user)
+    doc_content = "retrieval only search without an llm provider"
+    DocumentManager.seed_doc_with_content(cc_pair, doc_content, api_key)
+
+    resp = _search(doc_content, admin_user, retrieval_only=True)
+    assert resp.status_code == 200
+
+    matches = [
+        result for result in resp.json()["results"] if doc_content in result["content"]
+    ]
+    assert len(matches) == 1
+    assert matches[0]["source_type"]
+
+
 def test_document_set_filtering(
     admin_user: DATestUser,
     llm_provider: DATestLLMProvider,  # noqa: ARG001

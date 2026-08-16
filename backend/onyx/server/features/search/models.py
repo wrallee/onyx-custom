@@ -22,6 +22,7 @@ class SearchRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
 
+    retrieval_only: bool = False
     skip_query_expansion: bool = False
 
     message_history: list[ChatMinimalTextMessage] | None = None

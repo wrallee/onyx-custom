@@ -116,6 +116,34 @@ def test_server_empty_state_is_success() -> None:
     results.assert_called_once_with(MCPServerToolName.SEARCH_INDEXED_DOCUMENTS, 0)
 
 
+def test_server_document_search_requests_retrieval_only() -> None:
+    successful_response = httpx.Response(
+        200,
+        json={"results": []},
+        request=httpx.Request("POST", "https://api.example/search"),
+    )
+    with (
+        patch.object(search, "require_access_token", return_value=MagicMock()),
+        patch.object(
+            search,
+            "get_indexed_sources",
+            new=AsyncMock(return_value=["confluence"]),
+        ),
+        patch.object(
+            search,
+            "_post_model",
+            new=AsyncMock(return_value=successful_response),
+        ) as post_model,
+        patch.object(search, "record_mcp_server_tool_outcome"),
+        patch.object(search, "record_mcp_search_results"),
+    ):
+        response = asyncio.run(search.search_indexed_documents("query"))
+
+    assert response == {"results": []}
+    request = post_model.await_args.args[1]
+    assert request.retrieval_only is True
+
+
 def test_server_upstream_failure_is_recorded_once() -> None:
     failed_response = httpx.Response(
         503,

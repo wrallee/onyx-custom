@@ -20,7 +20,13 @@ from onyx.auth.permissions import require_permission
 from onyx.auth.schemas import UserRole
 from onyx.chat.emitter import NullEmitter
 from onyx.configs.constants import MessageType
-from onyx.context.search.models import BaseFilters, PersonaSearchInfo, TimeRange
+from onyx.context.search.models import (
+    BaseFilters,
+    ChunkSearchRequest,
+    PersonaSearchInfo,
+    TimeRange,
+)
+from onyx.context.search.pipeline import merge_individual_chunks, search_pipeline
 from onyx.db.engine.sql_engine import get_session
 from onyx.db.enums import Permission
 from onyx.db.llm import (
@@ -52,6 +58,53 @@ from onyx.tools.tool_implementations.search.search_tool import SearchTool
 from shared_configs.contextvars import get_current_tenant_id
 
 router = APIRouter(prefix="/search")
+
+
+def _run_retrieval_search(
+    request: SearchRequest,
+    user: User,
+    db_session: Session,
+    persona_search_info: PersonaSearchInfo,
+    base_filters: BaseFilters,
+) -> SearchResponse:
+    search_settings = get_current_search_settings(db_session)
+    document_index = get_default_document_index(search_settings, None, db_session)
+    chunks = search_pipeline(
+        chunk_search_request=ChunkSearchRequest(
+            query=request.query,
+            user_selected_filters=base_filters,
+        ),
+        document_index=document_index,
+        user=user,
+        persona_search_info=persona_search_info,
+        db_session=db_session,
+    )
+    sections = merge_individual_chunks(chunks)
+
+    citation_ids: dict[str, int] = {}
+    results: list[SearchResult] = []
+    for section in sections:
+        chunk = section.center_chunk
+        citation_id = citation_ids.setdefault(
+            chunk.document_id,
+            len(citation_ids) + 1,
+        )
+        results.append(
+            SearchResult(
+                citation_id=citation_id,
+                title=chunk.semantic_identifier or "Unknown",
+                content=section.combined_content,
+                link=(
+                    next(iter(chunk.source_links.values()), None)
+                    if chunk.source_links
+                    else None
+                ),
+                source_type=chunk.source_type.value,
+                updated_at=chunk.updated_at.isoformat() if chunk.updated_at else None,
+            )
+        )
+
+    return SearchResponse(results=results)
 
 
 @router.post("", dependencies=[Depends(require_vector_db)])
@@ -87,7 +140,29 @@ def search(
             hierarchy_node_ids=[],
         )
 
-    # 2. Get LLM
+    # 2. Build filters. The public time_cutoff maps onto the internal
+    # updated_at_range lower bound; TimeRange coerces naive bounds to UTC.
+    base_filters = BaseFilters(
+        source_type=request.sources,
+        document_set=request.document_sets,
+        updated_at_range=(
+            TimeRange(start=request.time_cutoff)
+            if request.time_cutoff is not None
+            else None
+        ),
+        tags=request.tags,
+    )
+
+    if request.retrieval_only:
+        return _run_retrieval_search(
+            request=request,
+            user=user,
+            db_session=db_session,
+            persona_search_info=persona_search_info,
+            base_filters=base_filters,
+        )
+
+    # 3. Get LLM
     if request.provider:
         provider_model = fetch_existing_llm_provider(request.provider, db_session)
         if not provider_model:
@@ -120,19 +195,6 @@ def search(
         db_session=db_session,
         tenant_id=get_current_tenant_id(),
         llm_provider_api_key=llm.config.api_key,
-    )
-
-    # 3. Build filters. The public time_cutoff maps onto the internal
-    # updated_at_range lower bound; TimeRange coerces naive bounds to UTC.
-    base_filters = BaseFilters(
-        source_type=request.sources,
-        document_set=request.document_sets,
-        updated_at_range=(
-            TimeRange(start=request.time_cutoff)
-            if request.time_cutoff is not None
-            else None
-        ),
-        tags=request.tags,
     )
 
     # 4. Get document index

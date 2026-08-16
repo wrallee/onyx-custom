@@ -112,16 +112,15 @@ async def search_indexed_documents(
     source_types: list[str] | None = None,
     document_set_names: list[str] | None = None,
     time_cutoff: str | None = None,
-    skip_query_expansion: bool = False,
 ) -> dict[str, Any]:
     """
     Search the user's knowledge base indexed in Onyx.
     Use this tool for information that is not public knowledge and specific to the user,
     their team, their work, or their organization/company.
 
-    Runs the full Onyx search pipeline (LLM query expansion, hybrid retrieval,
-    document selection, context expansion) — the same search quality as the
-    Onyx chat interface.
+    Runs Onyx hybrid retrieval and reranking without invoking a generative LLM.
+    The MCP client is responsible for refining queries and selecting relevant
+    content from the returned results.
 
     To find a list of available sources, use the `indexed_sources` resource.
     `document_set_names` restricts results to documents belonging to the named
@@ -131,15 +130,9 @@ async def search_indexed_documents(
     `time_cutoff` accepts an ISO 8601 timestamp; only documents updated on or
     after that moment are returned. Naive (timezone-less) timestamps are
     treated as UTC server-side.
-    `skip_query_expansion` bypasses the LLM query-expansion step; useful when
-    you already know the exact phrase to search for (faster, no LLM call for
-    expansion).
-
     Returns ``{"results": [{title, url, source_type, content, updated_at},
-    ...]}``. Results are ordered by LLM-judged relevance. ``content`` is the
-    full chunk of the document the LLM selected; in the rare case the LLM
-    selection step yields no full chunk for a doc, it falls back to the
-    short search blurb.
+    ...]}``. Results are ordered by retrieval relevance. ``content`` contains
+    adjacent matching chunks merged into a section.
 
     Example usage:
     ```
@@ -220,7 +213,7 @@ async def search_indexed_documents(
             sources=source_type_enums,
             document_sets=document_set_names,
             time_cutoff=parsed_cutoff,
-            skip_query_expansion=skip_query_expansion,
+            retrieval_only=True,
         )
         endpoint = f"{build_api_server_url_for_http_requests(respect_env_override_if_set=True)}/search"
         response = await _post_model(endpoint, request, access_token)
