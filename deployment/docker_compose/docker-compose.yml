@@ -294,7 +294,7 @@ services:
     restart: unless-stopped
     volumes:
       # Not necessary, this is just to reduce download time during startup
-      - model_cache_huggingface:/app/.cache/huggingface/
+      - model_cache_huggingface:/app/.cache/huggingface/:z
       # Optional, only for debugging purposes
       - inference_model_server_logs:/var/log/onyx
     logging:
@@ -339,7 +339,7 @@ services:
       - INDEXING_ONLY=True
     volumes:
       # Not necessary, this is just to reduce download time during startup
-      - indexing_huggingface_model_cache:/app/.cache/huggingface/
+      - indexing_huggingface_model_cache:/app/.cache/huggingface/:z
       # Optional, only for debugging purposes
       - indexing_model_server_logs:/var/log/onyx
     logging:
@@ -546,6 +546,8 @@ services:
     # Below is needed for the `docker-out-of-docker` execution mode
     # For Linux rootless Docker, set DOCKER_SOCK_PATH=${XDG_RUNTIME_DIR}/docker.sock
     user: root
+    security_opt:
+      - label=disable
     volumes:
       - ${DOCKER_SOCK_PATH:-/var/run/docker.sock}:/var/run/docker.sock
 
